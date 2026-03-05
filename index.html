@@ -127,7 +127,7 @@
   /* ADD FORM */
   .add-form { background: var(--surface); border: 1px solid var(--accent); border-radius: 8px; padding: 18px; }
   .add-form h3 { font-size: 12px; color: var(--accent); font-family: var(--mono); margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.09em; }
-  .add-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto; gap: 10px; align-items: end; }
+  .add-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto; gap: 10px; align-items: end; }
   .form-field label { display: block; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; font-family: var(--mono); margin-bottom: 4px; }
   .form-field input { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; color: var(--text); font-family: var(--mono); font-size: 13px; outline: none; width: 100%; }
   .form-field input:focus { border-color: var(--accent); }
@@ -203,7 +203,8 @@
     <div class="section-title">Items to order — <span id="order-count">0</span> drugs</div>
     <div id="review-list"></div>
     <div class="action-bar">
-      <button class="btn btn-primary"   onclick="generateCSV()">⬇ Download SureCost CSV</button>
+      <button class="btn btn-primary"   onclick="generateCSV(false)">⬇ Download SureCost CSV</button>
+      <button class="btn btn-primary"   onclick="generateCSV(true)" style="background:#ffb800;color:#0a0e0a">⬇ Download SureCost CSV (C3-5)</button>
       <button class="btn btn-secondary" onclick="switchTab('packing')">📋 Packing Report</button>
       <button class="btn btn-ghost"     onclick="switchTab('count')">← Back</button>
     </div>
@@ -251,6 +252,7 @@
         <div class="form-field"><label>Cards/Month</label><input id="new-month" type="number" placeholder="20" min="0"></div>
         <div class="form-field"><label>Pkg Size</label><input id="new-pkg" type="number" placeholder="1000" min="1"></div>
         <div class="form-field"><label>Tabs/Card</label><input id="new-mult" type="number" placeholder="30" min="1"></div>
+        <div class="form-field"><label>C3-5?</label><div style="display:flex;align-items:center;height:36px"><input id="new-controlled" type="checkbox" style="width:18px;height:18px;accent-color:var(--warn)"></div></div>
         <div class="form-field"><label>&nbsp;</label><button class="btn btn-primary btn-sm" onclick="addDrug()" style="white-space:nowrap">Add Drug</button></div>
       </div>
     </div>
@@ -280,6 +282,8 @@ const DEFAULT_DRUGS = [
   {name:"ACIDOPHILUS  CAP PROBIOTI",       ndc:"40985022928", oneMonth:10,  pkgSize:150,  multiplier:30},
   {name:"AMLODIPINE   TAB 10MG",           ndc:"69097012815", oneMonth:20,  pkgSize:1000, multiplier:30},
   {name:"AMLODIPINE   TAB 5MG",            ndc:"69097012715", oneMonth:47,  pkgSize:1000, multiplier:30},
+  {name:"ALPRAZOLAM   TAB 0.25MG",         ndc:"65862067699", oneMonth:20,  pkgSize:500,  multiplier:30, controlled:true},
+  {name:"ALPRAZOLAM   TAB 0.5MG",          ndc:"65862067701", oneMonth:33,  pkgSize:500,  multiplier:30, controlled:true},
   {name:"ASPIRIN LOW  CHW 81MG",           ndc:"00904679480", oneMonth:38,  pkgSize:1000, multiplier:30},
   {name:"ASPIRIN LOW  TAB 81MG EC",        ndc:"00904675180", oneMonth:49,  pkgSize:1000, multiplier:30},
   {name:"ATORVASTATIN TAB 10MG",           ndc:"60505257808", oneMonth:21,  pkgSize:1000, multiplier:30},
@@ -294,6 +298,7 @@ const DEFAULT_DRUGS = [
   {name:"CARVEDILOL   TAB 3.125MG",        ndc:"68382009205", oneMonth:12,  pkgSize:500,  multiplier:30},
   {name:"CARVEDILOL   TAB 6.25MG",         ndc:"68382009305", oneMonth:9,   pkgSize:500,  multiplier:30},
   {name:"CETIRIZINE   TAB 10MG",           ndc:"43598081115", oneMonth:12,  pkgSize:500,  multiplier:30},
+  {name:"CLONAZEPAM   TAB 0.5MG",          ndc:"59651072299", oneMonth:12,  pkgSize:500,  multiplier:30, controlled:true},
   {name:"CLOPIDOGREL  TAB 75MG",           ndc:"43598012105", oneMonth:36,  pkgSize:500,  multiplier:30},
   {name:"DIVALPROEX   TAB 125MG DR",       ndc:"57237010605", oneMonth:10,  pkgSize:500,  multiplier:30},
   {name:"DIVALPROEX   TAB 250MG DR",       ndc:"57237004705", oneMonth:9,   pkgSize:500,  multiplier:30},
@@ -324,6 +329,8 @@ const DEFAULT_DRUGS = [
   {name:"LORATADINE   TAB 10MG",           ndc:"45802065078", oneMonth:12,  pkgSize:100,  multiplier:30},
   {name:"LOSARTAN POT TAB 100MG",          ndc:"65862020399", oneMonth:11,  pkgSize:1000, multiplier:30},
   {name:"LOSARTAN POT TAB 50MG",           ndc:"65862020299", oneMonth:17,  pkgSize:1000, multiplier:30},
+  {name:"LORAZEPAM    TAB 0.5MG",          ndc:"69315090405", oneMonth:73,  pkgSize:500,  multiplier:30, controlled:true},
+  {name:"LORAZEPAM    TAB 1MG",            ndc:"69315090505", oneMonth:29,  pkgSize:500,  multiplier:30, controlled:true},
   {name:"MELATONIN    TAB 3MG",            ndc:"80681014800", oneMonth:24,  pkgSize:500,  multiplier:30},
   {name:"MEMANTINE    TAB HCL 10MG",       ndc:"33342029815", oneMonth:61,  pkgSize:500,  multiplier:30},
   {name:"MEMANTINE    TAB HCL 5MG",        ndc:"72578000305", oneMonth:16,  pkgSize:500,  multiplier:30},
@@ -353,6 +360,7 @@ const DEFAULT_DRUGS = [
   {name:"TAMSULOSIN   CAP 04MG",           ndc:"65862059805", oneMonth:40,  pkgSize:500,  multiplier:30},
   {name:"TRAZODONE    TAB 100MG",          ndc:"50111056103", oneMonth:16,  pkgSize:1000, multiplier:30},
   {name:"TRAZODONE    TAB 50MG",           ndc:"50111056003", oneMonth:28,  pkgSize:1000, multiplier:30},
+  {name:"TRAMADOL HCL TAB 50MG",           ndc:"72888008000", oneMonth:89,  pkgSize:1000, multiplier:30, controlled:true},
   {name:"VITAMIN B-12 TAB 1000MCG",        ndc:"10006070022", oneMonth:22,  pkgSize:130,  multiplier:30},
   {name:"VITAMIN B-12 TAB 500MCG",         ndc:"80681012800", oneMonth:13,  pkgSize:130,  multiplier:30},
   {name:"VITAMIN C    TAB 500MG",          ndc:"00536329210", oneMonth:24,  pkgSize:1000, multiplier:30},
@@ -642,9 +650,10 @@ function renderSettings() {
 
   document.getElementById('settings-tbody').innerHTML = filtered.map(drug => {
     const i = drugs.indexOf(drug);
+    const cTag = drug.controlled ? '<span style="color:#ffb800;font-size:10px;font-family:var(--mono);margin-left:6px;border:1px solid #ffb800;padding:1px 4px;border-radius:3px">C3-5</span>' : '';
     return `<tr>
-      <td><input class="s-input s-name" type="text" value="${drug.name}"
-            onchange="setField(${i},'name',this.value)"></td>
+      <td><div style="display:flex;align-items:center"><input class="s-input s-name" type="text" value="${drug.name}"
+            onchange="setField(${i},'name',this.value)">${cTag}</div></td>
       <td><input class="s-input s-ndc"  type="text" value="${drug.ndc}" maxlength="11"
             onchange="setField(${i},'ndc',this.value)"></td>
       <td><input class="s-input s-num"  type="number" min="0" value="${drug.oneMonth}"
@@ -655,6 +664,7 @@ function renderSettings() {
             onchange="setField(${i},'multiplier',+this.value)"></td>
       <td><button class="del-btn" onclick="deleteDrug(${i})">✕</button></td>
     </tr>`;
+  }).join('');
   }).join('');
 }
 
@@ -680,17 +690,19 @@ function addDrug() {
   const mo   = parseInt(document.getElementById('new-month').value);
   const pkg  = parseInt(document.getElementById('new-pkg').value);
   const mult = parseInt(document.getElementById('new-mult').value) || 30;
+  const controlled = document.getElementById('new-controlled').checked;
 
   if (!name)              { showToast('Drug name required'); return; }
   if (ndc.length !== 11)  { showToast('NDC must be 11 digits'); return; }
   if (isNaN(mo)||mo<0)    { showToast('Valid cards/month required'); return; }
   if (isNaN(pkg)||pkg<1)  { showToast('Valid package size required'); return; }
 
-  drugs.push({name, ndc, oneMonth:mo, pkgSize:pkg, multiplier:mult});
+  drugs.push({name, ndc, oneMonth:mo, pkgSize:pkg, multiplier:mult, controlled:controlled||undefined});
   drugs.sort((a,b) => a.name.localeCompare(b.name));
   saveDrugs();
   renderSettings();
   ['new-name','new-ndc','new-month','new-pkg','new-mult'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('new-controlled').checked = false;
   showToast(`Added ${name}`);
 }
 
@@ -706,9 +718,15 @@ function exportDrugList() {
 }
 
 // ── CSV ──────────────────────────────────────────────────────────────────────
-function generateCSV() {
-  const toOrder = drugs.filter(d => calc(d).pkgsNeeded > 0);
-  if (!toOrder.length) { showToast('Nothing to order!'); return; }
+function generateCSV(controlledOnly) {
+  let toOrder = drugs.filter(d => calc(d).pkgsNeeded > 0);
+  if (controlledOnly) {
+    toOrder = toOrder.filter(d => d.controlled);
+  } else {
+    toOrder = toOrder.filter(d => !d.controlled);
+  }
+  const label = controlledOnly ? 'controlled' : 'non-controlled';
+  if (!toOrder.length) { showToast(`No ${label} drugs to order!`); return; }
 
   const today = new Date();
   const date  = `${today.getMonth()+1}/${today.getDate()}/${today.getFullYear()}`;
@@ -719,9 +737,10 @@ function generateCSV() {
     return `${poNumber},${date},${i+1},${drug.ndc},${safeName},${pkgsNeeded}`;
   });
 
+  const suffix = controlledOnly ? '_C35' : '';
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'})),
-    download: `PO${poNumber}.csv`
+    download: `PO${poNumber}${suffix}.csv`
   });
   a.click();
 
@@ -729,7 +748,7 @@ function generateCSV() {
   document.getElementById('po-display').textContent = poNumber;
   document.getElementById('po-input').value = poNumber;
   savePONum();
-  showToast(`Downloaded PO${used}.csv — next PO: ${poNumber}`);
+  showToast(`Downloaded PO${used}${suffix}.csv — next PO: ${poNumber}`);
 }
 
 // ── PRINT ────────────────────────────────────────────────────────────────────
