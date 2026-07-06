@@ -225,6 +225,8 @@
     <div class="settings-toolbar">
       <span class="section-title" style="margin:0;flex:1">Drug List — <span id="settings-count">0</span> drugs</span>
       <input class="search-box" id="settings-search" type="text" placeholder="Search…" oninput="renderSettings()" style="max-width:200px;flex:none">
+      <input type="file" id="csv-import-file" accept=".csv,text/csv" style="display:none" onchange="importDrugList(this)">
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('csv-import-file').click()">⬆ Import CSV</button>
       <button class="btn btn-ghost btn-sm" onclick="exportDrugList()">⬇ Export CSV</button>
     </div>
 
@@ -276,6 +278,12 @@
 
 <script>
 // ── DEFAULT DRUG LIST ───────────────────────────────────────────────────────
+const CONTROLLED_NDCS = ['65862067699','65862067701','59651072299','69315090405','69315090505','72888008000'];
+
+// Counts are keyed by NDC + tabs/card so two card lines can share one NDC
+// (e.g. Acetaminophen 500mg packed as 30-count and 60-count 2/blister cards)
+const countKey = d => d.ndc + '_' + d.multiplier;
+
 const DEFAULT_DRUGS = [
   {name:"ACETAMIN     TAB 325MG",          ndc:"49483034010", oneMonth:75,  pkgSize:1000, multiplier:60},
   {name:"ACETAMIN     TAB 500MG",          ndc:"00904672080", oneMonth:52,  pkgSize:1000, multiplier:30},
@@ -412,7 +420,7 @@ async function initFirebase() {
   if (drugsSnap.exists()) {
     drugs = drugsSnap.val();
     // One-time migration: tag controlled drugs if not already flagged
-    const controlledNDCs = ['65862067699','65862067701','59651072299','69315090405','69315090505','72888008000'];
+    const controlledNDCs = CONTROLLED_NDCS;
     let migrated = false;
     drugs.forEach(d => {
       if (controlledNDCs.includes(d.ndc) && !d.controlled) { d.controlled = true; migrated = true; }
@@ -423,6 +431,11 @@ async function initFirebase() {
       drugs.push(JSON.parse(JSON.stringify(d)));
       migrated = true;
     });
+    // One-time: add Acetaminophen 500mg 2/blister (60-tab) card line if missing
+    if (!drugs.some(d => d.ndc === '00904672080' && +d.multiplier === 60)) {
+      drugs.push({name:'ACETAMIN     TAB 500MG 2BLST', ndc:'00904672080', oneMonth:19, pkgSize:1000, multiplier:60});
+      migrated = true;
+    }
     if (migrated) { drugs.sort((a,b) => a.name.localeCompare(b.name)); await set(ref(db, 'drugs'), drugs); }
   } else {
     drugs = JSON.parse(JSON.stringify(DEFAULT_DRUGS));
@@ -434,6 +447,25 @@ async function initFirebase() {
   if (poSnap.exists()) poNumber = poSnap.val();
   document.getElementById('po-display').textContent = poNumber;
   document.getElementById('po-input').value = poNumber;
+
+  // ── One-time counts migration: bare NDC keys → NDC_tabsPerCard keys ──
+  const countsSnap = await get(ref(db, 'counts'));
+  if (countsSnap.exists()) {
+    const raw = countsSnap.val();
+    let cMigrated = false;
+    const claimed = new Set();
+    drugs.forEach(d => {
+      const k = countKey(d);
+      // first drug with a given NDC inherits the old bare-NDC count
+      if (raw[k] === undefined && raw[d.ndc] !== undefined && !claimed.has(d.ndc)) {
+        raw[k] = raw[d.ndc];
+        cMigrated = true;
+      }
+      claimed.add(d.ndc);
+    });
+    Object.keys(raw).forEach(k => { if (!k.includes('_')) { delete raw[k]; cMigrated = true; } });
+    if (cMigrated) await set(ref(db, 'counts'), raw);
+  }
 
   // ── Listen to counts in real time ──
   onValue(ref(db, 'counts'), (snap) => {
@@ -448,8 +480,18 @@ async function initFirebase() {
 
 async function saveDrugs() {
   if (!db) return;
-  const { ref, set } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
-  await set(ref(db, 'drugs'), drugs);
+  setSyncStatus('syncing');
+  try {
+    const { ref, set } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
+    // JSON round-trip strips any `undefined` values, which Firebase rejects
+    const clean = JSON.parse(JSON.stringify(drugs));
+    await set(ref(db, 'drugs'), clean);
+    setSyncStatus('synced');
+  } catch (e) {
+    console.error('saveDrugs failed:', e);
+    setSyncStatus('offline');
+    showToast('⚠ Drug list save FAILED — changes not synced');
+  }
 }
 
 async function saveCounts() {
@@ -470,7 +512,7 @@ async function savePONum() {
 // Order triggers when months on hand < 1.0
 // Target is always 1.5 months
 function calc(drug) {
-  const current    = counts[drug.ndc] ?? 0;
+  const current    = counts[countKey(drug)] ?? 0;
   const monthsLeft = drug.oneMonth > 0 ? current / drug.oneMonth : 99;
   const target     = drug.oneMonth * 1.5;
   const needsOrder = monthsLeft < 1.0;
@@ -510,11 +552,12 @@ function renderDrugs() {
     const { current, pkgsNeeded, monthsLeft } = calc(drug);
     const s   = status(drug);
     const cls = s === 'need' ? 'needs-order' : s === 'low' ? 'low-stock' : 'ok';
-    const val = counts[drug.ndc] !== undefined ? counts[drug.ndc] : '';
+    const key = countKey(drug);
+    const val = counts[key] !== undefined ? counts[key] : '';
     const moDisplay = val !== '' ? monthsLeft.toFixed(1) : '—';
     const moColor   = monthsLeft < 1 ? 'red' : 'muted';
 
-    return `<div class="drug-row ${cls}" data-ndc="${drug.ndc}">
+    return `<div class="drug-row ${cls}" data-key="${key}">
       <div>
         <div class="drug-name">${drug.name}</div>
         <div class="drug-sub">${drug.ndc} &nbsp;·&nbsp; ${drug.oneMonth}/mo &nbsp;·&nbsp; pkg ${drug.pkgSize}</div>
@@ -523,8 +566,8 @@ function renderDrugs() {
         <div class="cell-label">Cards</div>
         <input class="count-input" type="number" min="0" inputmode="numeric"
           placeholder="—" value="${val}"
-          onblur="updateCount('${drug.ndc}',this.value)"
-          onkeydown="handleCountKey(event,'${drug.ndc}')"
+          onblur="updateCount('${key}',this.value)"
+          onkeydown="handleCountKey(event,'${key}')"
           onfocus="this.select()">
       </div>
       <div class="cell">
@@ -539,22 +582,22 @@ function renderDrugs() {
   }).join('');
 }
 
-function updateCount(ndc, val) {
+function updateCount(key, val) {
   const n = parseInt(val);
-  if (val === '' || isNaN(n)) delete counts[ndc];
-  else counts[ndc] = Math.max(0, n);
+  if (val === '' || isNaN(n)) delete counts[key];
+  else counts[key] = Math.max(0, n);
   saveCounts();
-  patchRow(ndc);
+  patchRow(key);
 }
 
-function patchRow(ndc) {
-  const drug = drugs.find(d => d.ndc === ndc);
+function patchRow(key) {
+  const drug = drugs.find(d => countKey(d) === key);
   if (!drug) return;
-  const row = document.querySelector(`.drug-row[data-ndc="${ndc}"]`);
+  const row = document.querySelector(`.drug-row[data-key="${key}"]`);
   if (!row) return;
 
   const { monthsLeft, pkgsNeeded } = calc(drug);
-  const hasVal = counts[ndc] !== undefined;
+  const hasVal = counts[key] !== undefined;
   const s = status(drug);
 
   row.classList.remove('needs-order','low-stock','ok');
@@ -580,18 +623,18 @@ function patchRow(ndc) {
   document.getElementById('stat-ok').textContent   = ok;
 }
 
-function handleCountKey(event, ndc) {
+function handleCountKey(event, key) {
   if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
     event.preventDefault();
     const input = event.target;
-    updateCount(ndc, input.value);
+    updateCount(key, input.value);
     const inputs = Array.from(document.querySelectorAll('.count-input'));
     const next = inputs[inputs.indexOf(input) + 1];
     if (next) { next.focus(); next.select(); }
   } else if (event.key === 'Tab' && event.shiftKey) {
     event.preventDefault();
     const input = event.target;
-    updateCount(ndc, input.value);
+    updateCount(key, input.value);
     const inputs = Array.from(document.querySelectorAll('.count-input'));
     const prev = inputs[inputs.indexOf(input) - 1];
     if (prev) { prev.focus(); prev.select(); }
@@ -682,6 +725,11 @@ function renderSettings() {
 
 function setField(i, field, val) {
   if (field === 'ndc') val = val.replace(/\D/g,'').padStart(11,'0').slice(-11);
+  if (['oneMonth','pkgSize','multiplier'].includes(field) && (typeof val !== 'number' || isNaN(val))) {
+    showToast('Invalid number — not saved');
+    renderSettings();
+    return;
+  }
   drugs[i][field] = val;
   saveDrugs();
   showToast('Saved');
@@ -689,7 +737,7 @@ function setField(i, field, val) {
 
 function deleteDrug(i) {
   if (!confirm(`Remove "${drugs[i].name}"?`)) return;
-  delete counts[drugs[i].ndc];
+  delete counts[countKey(drugs[i])];
   drugs.splice(i, 1);
   saveDrugs(); saveCounts();
   renderSettings();
@@ -709,7 +757,9 @@ function addDrug() {
   if (isNaN(mo)||mo<0)    { showToast('Valid cards/month required'); return; }
   if (isNaN(pkg)||pkg<1)  { showToast('Valid package size required'); return; }
 
-  drugs.push({name, ndc, oneMonth:mo, pkgSize:pkg, multiplier:mult, controlled:controlled||undefined});
+  const newDrug = {name, ndc, oneMonth:mo, pkgSize:pkg, multiplier:mult};
+  if (controlled) newDrug.controlled = true;
+  drugs.push(newDrug);
   drugs.sort((a,b) => a.name.localeCompare(b.name));
   saveDrugs();
   renderSettings();
@@ -727,6 +777,99 @@ function exportDrugList() {
     download: 'prepack_drug_list.csv'
   });
   a.click();
+}
+
+// ── CSV IMPORT ───────────────────────────────────────────────────────────────
+// Same format as export: Name,NDC,Cards/Month,PkgSize,TabsPerCard (header optional).
+// Merge behavior: rows are matched to existing drugs by NDC + Tabs/Card.
+// Matched drugs get name/cards-month/pkg-size updated; unmatched rows are added
+// as new drugs. Drugs NOT in the CSV are left alone (import never deletes).
+function parseCSVLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"') { if (line[i+1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else cur += ch;
+    } else {
+      if (ch === '"') inQ = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+async function importDrugList(input) {
+  const file = input.files[0];
+  input.value = '';               // allow re-importing the same filename later
+  if (!file) return;
+
+  let text;
+  try { text = await file.text(); }
+  catch (e) { alert('Could not read file: ' + e.message); return; }
+
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) { alert('File is empty.'); return; }
+
+  let start = 0;
+  if (/name/i.test(lines[0]) && /ndc/i.test(lines[0])) start = 1;   // skip header row
+
+  const rows = [], errors = [];
+  for (let i = start; i < lines.length; i++) {
+    const f = parseCSVLine(lines[i]);
+    if (f.length < 5) { errors.push(`Line ${i+1}: expected 5 columns, got ${f.length}`); continue; }
+    const name  = f[0].trim().toUpperCase();
+    const digits = f[1].replace(/\D/g, '');
+    const ndc   = digits.padStart(11, '0').slice(-11);
+    const mo    = parseInt(f[2]);
+    const pkg   = parseInt(f[3]);
+    const mult  = parseInt(f[4]) || 30;
+    if (!name)                    { errors.push(`Line ${i+1}: missing drug name`); continue; }
+    if (digits.length < 9 || digits.length > 11) { errors.push(`Line ${i+1}: NDC "${f[1]}" is not 9-11 digits`); continue; }
+    if (isNaN(mo) || mo < 0)      { errors.push(`Line ${i+1}: bad Cards/Month "${f[2]}"`); continue; }
+    if (isNaN(pkg) || pkg < 1)    { errors.push(`Line ${i+1}: bad PkgSize "${f[3]}"`); continue; }
+    rows.push({ name, ndc, oneMonth: mo, pkgSize: pkg, multiplier: mult });
+  }
+
+  if (!rows.length) {
+    alert('No valid rows found.\n\n' + errors.slice(0, 10).join('\n'));
+    return;
+  }
+
+  // Build the merge plan (match on NDC + tabs/card)
+  const toUpdate = [], toAdd = [];
+  rows.forEach(r => {
+    const existing = drugs.find(d => d.ndc === r.ndc && +d.multiplier === r.multiplier);
+    if (existing) toUpdate.push([existing, r]); else toAdd.push(r);
+  });
+
+  const msg =
+    `Import "${file.name}"?\n\n` +
+    `• ${toUpdate.length} existing drugs will be UPDATED\n` +
+    `• ${toAdd.length} new drugs will be ADDED\n` +
+    (errors.length ? `• ${errors.length} invalid rows will be skipped\n` : '') +
+    `\nDrugs not in the CSV are left untouched (import never deletes).`;
+  if (!confirm(msg)) return;
+
+  toUpdate.forEach(([d, r]) => {
+    d.name = r.name; d.oneMonth = r.oneMonth; d.pkgSize = r.pkgSize;
+    // NDC and multiplier are the match key, so they are unchanged by definition.
+    // The controlled flag is preserved.
+  });
+  toAdd.forEach(r => {
+    const d = { name: r.name, ndc: r.ndc, oneMonth: r.oneMonth, pkgSize: r.pkgSize, multiplier: r.multiplier };
+    if (CONTROLLED_NDCS.includes(d.ndc)) d.controlled = true;
+    drugs.push(d);
+  });
+  drugs.sort((a, b) => a.name.localeCompare(b.name));
+
+  saveDrugs();
+  renderSettings();
+  renderDrugs();
+  showToast(`Imported: ${toUpdate.length} updated, ${toAdd.length} added` + (errors.length ? `, ${errors.length} skipped` : ''));
+  if (errors.length) console.warn('Import skipped rows:\n' + errors.join('\n'));
 }
 
 // ── CSV ──────────────────────────────────────────────────────────────────────
